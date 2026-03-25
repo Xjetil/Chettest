@@ -1,204 +1,102 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Status Light (two-URL health check)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root {
-      --grey: #9aa0a6;
-      --green: #34a853;
-      --red: #ea4335;
-      --black: #202124;
-      --bg: #f7f8f9;
-      --border: #dadce0;
-      --muted: #5f6368;
+
+<script>
+  // === CONFIG ===
+  const DEFAULTS = {
+    URL_1: "https://t1-safezone.telenor.no/",
+    URL_2: "https://t2-safezone.telenor.no/",
+    TIMEOUT_MS: 1000 // 1 second timeout
+  };
+
+  const KEY = "statusLightConfig";
+  function loadCfg() {
+    try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : { ...DEFAULTS }; }
+    catch { return { ...DEFAULTS }; }
+  }
+  function saveCfg(cfg) { localStorage.setItem(KEY, JSON.stringify(cfg)); }
+  let cfg = loadCfg();
+  const el = (id) => document.getElementById(id);
+
+  function setLight(color, text) {
+    el("light").className = `light ${color}`;
+    el("statusText").textContent = text;
+  }
+
+  // fetch with timeout; resolves {ok, status, elapsedMs, timedOut}
+  async function timedFetch(url, timeoutMs) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
+    const start = performance.now();
+    try {
+      const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+      const elapsedMs = Math.round(performance.now() - start);
+      clearTimeout(timer);
+      return { ok: res.ok, status: res.status, elapsedMs, timedOut: false };
+    } catch (err) {
+      const elapsedMs = Math.round(performance.now() - start);
+      clearTimeout(timer);
+      const timedOut = (err && (err.name === "AbortError" || err === "timeout"));
+      return {
+        ok: false,
+        status: timedOut ? "timeout" : (err?.message || "error"),
+        elapsedMs,
+        timedOut
+      };
     }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-           background: var(--bg); color: var(--black); margin: 0; padding: 24px; }
-    .card { background: #fff; border: 1px solid var(--border); border-radius: 12px;
-            padding: 20px; max-width: 680px; margin: 0 auto;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-    h1 { margin: 0 0 12px; font-size: 20px; }
-    .light { width: 28px; height: 28px; border-radius: 50%; background: var(--grey);
-             border: 2px solid #fff;
-             box-shadow: 0 0 0 2px rgba(0,0,0,0.06), inset 0 0 8px rgba(0,0,0,0.25);
-             display: inline-block; vertical-align: middle; margin-right: 12px;
-             transition: background-color 120ms ease, box-shadow 120ms ease; }
-    .light.red   { background: var(--red);
-                   box-shadow: 0 0 0 2px rgba(0,0,0,0.06), 0 0 12px 2px rgba(234,67,53,0.4) inset; }
-    .light.green { background: var(--green);
-                   box-shadow: 0 0 0 2px rgba(0,0,0,0.06), 0 0 12px 2px rgba(52,168,83,0.4) inset; }
-    .light.grey  { background: var(--grey); }
-    .status-row { display: flex; align-items: center; }
-    .label { font-weight: 600; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
-    .cell { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-    .kv { display: grid; grid-template-columns: 110px 1fr; row-gap: 8px; }
-    .kv .k { color: var(--muted); }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; }
-    .small { font-size: 12px; color: var(--muted); }
-    .legend { margin-top: 12px; font-size: 13px; color: var(--muted); }
-    button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
-    button:hover { background: #fafafa; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Service Status</h1>
-    <div class="status-row">
-      <span id="light" class="light grey" aria-label="status light"></span>
-      <span id="statusText" class="label">Waiting…</span>
-    </div>
-    <div class="legend">
-      <strong>Rules:</strong>
-      <ul>
-        <li><b>Red</b>: both URL 1 and URL 2 responded with <code>200 OK</code> (≤ 1s)</li>
-        <li><b>Green</b>: URL 1 responded <code>200 OK</code> and URL 2 <i>timed out</i> (1s)</li>
-        <li><b>Grey</b>: neither responded <code>200 OK</code> within 1s</li>
-      </ul>
-    </div>
+  }
 
-    <div class="grid">
-      <div class="cell">
-        <div class="kv">
-          <div class="k">URL 1</div><div id="url1" class="mono"></div>
-          <div class="k">Result</div><div id="r1">–</div>
-          <div class="k">HTTP</div><div id="h1">–</div>
-          <div class="k">Latency</div><div id="t1">–</div>
-        </div>
-      </div>
-      <div class="cell">
-        <div class="kv">
-          <div class="k">URL 2</div><div id="url2" class="mono"></div>
-          <div class="k">Result</div><div id="r2">–</div>
-          <div class="k">HTTP</div><div id="h2">–</div>
-          <div class="k">Latency</div><div id="t2">–</div>
-        </div>
-      </div>
-    </div>
+  function applyRule(a, b) {
+    const a200 = a.ok && a.status === 200;
+    const b200 = b.ok && b.status === 200;
 
-    <div style="display:flex; gap:8px; align-items:center; margin-top:16px;">
-      <button id="refreshBtn">Check now</button>
-      <span class="small">Auto-refresh: every 10s • Last check: <span id="lastRun">never</span></span>
-    </div>
+    if (a200 && b200) return { color: "red", text: "Both services OK (200). Status: RED" };
+    if (a200 && b.timedOut) return { color: "green", text: "URL1 OK (200), URL2 timed out. Status: GREEN" };
+    if (!a200 && !b200) return { color: "grey", text: "No 200 OK within 1s. Status: GREY" };
 
-    <details style="margin-top:12px;">
-      <summary>Configure</summary>
-      <div style="margin-top:8px; display:grid; gap:8px;">
-        <label>URL 1: <input id="cfg1" type="text" style="width:100%"></label>
-        <label>URL 2: <input id="cfg2" type="text" style="width:100%"></label>
-        <label>Timeout (ms): <input id="cfgTimeout" type="number" min="100" step="100" value="1000"></label>
-        <button id="saveCfg">Save</button>
-      </div>
-      <p class="small">Values persist in your browser’s localStorage.</p>
-    </details>
-  </div>
+    return { color: "grey", text: "Mixed/unspecified combination. Status: GREY" };
+  }
 
-  <script>
-    // === PRE-FILLED WITH YOUR HOSTS ===
-    const DEFAULTS = {
-      URL_1: "https://t1-safezone.telenor.no/",
-      URL_2: "https://t2-safezone.telenor.no/",
-      TIMEOUT_MS: 3000,   // 1 second timeout
-      INTERVAL_MS: 20000, // auto-refresh every 10 seconds
-    };
+  function updateDetail(prefix, url, result) {
+    el(prefix).textContent = url;
+    el(prefix.replace("url", "r")).textContent =
+      result.ok ? "OK" : (result.timedOut ? "Timed out" : "Error");
+    el(prefix.replace("url", "h")).textContent = result.status;
+    el(prefix.replace("url", "t")).textContent = result.elapsedMs + " ms";
+  }
 
-    const KEY = "statusLightConfig";
-    function loadCfg() {
-      try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : { ...DEFAULTS }; }
-      catch { return { ...DEFAULTS }; }
-    }
-    function saveCfg(cfg) { localStorage.setItem(KEY, JSON.stringify(cfg)); }
-    let cfg = loadCfg();
-    const el = (id) => document.getElementById(id);
+  async function runCheck() {
+    const { URL_1, URL_2, TIMEOUT_MS } = cfg;
 
-    function setLight(color, text) {
-      el("light").className = `light ${color}`;
-      el("statusText").textContent = text;
-    }
+    const [r1, r2] = await Promise.allSettled([
+      timedFetch(URL_1, TIMEOUT_MS),
+      timedFetch(URL_2, TIMEOUT_MS),
+    ]);
 
-    // fetch with timeout; resolves {ok, status, elapsedMs, timedOut}
-    async function timedFetch(url, timeoutMs) {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
-      const start = performance.now();
-      try {
-        const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
-        const elapsedMs = Math.round(performance.now() - start);
-        clearTimeout(timer);
-        return { ok: res.ok, status: res.status, elapsedMs, timedOut: false };
-      } catch (err) {
-        const elapsedMs = Math.round(performance.now() - start);
-        clearTimeout(timer);
-        const timedOut = (err && (err.name === "AbortError" || err === "timeout"));
-        return { ok: false, status: timedOut ? "timeout" : (err?.message || "error"), elapsedMs, timedOut };
-      }
-    }
+    const a = r1.status === "fulfilled" ? r1.value : { ok: false, status: "error", elapsedMs: TIMEOUT_MS, timedOut: false };
+    const b = r2.status === "fulfilled" ? r2.value : { ok: false, status: "error", elapsedMs: TIMEOUT_MS, timedOut: false };
 
-    function applyRule(a, b) {
-      // Your exact rules:
-      // RED   if both return 200 OK within 1s
-      // GREEN if URL1 200 and URL2 times out
-      // GREY  if none 200 within 1s
-      const a200 = a.ok && a.status === 200;
-      const b200 = b.ok && b.status === 200;
+    updateDetail("url1", URL_1, a);
+    updateDetail("url2", URL_2, b);
 
-      if (a200 && b200) return { color: "red", text: "Both services OK (200). Status: RED" };
-      if (a200 && b.timedOut) return { color: "green", text: "URL1 OK (200), URL2 timed out. Status: GREEN" };
-      if (!a200 && !b200) return { color: "grey", text: "No 200 OK within 1s. Status: GREY" };
+    const rule = applyRule(a, b);
+    setLight(rule.color, rule.text);
 
-      // Other combinations not specified → show GREY with explanation
-      return { color: "grey", text: "Mixed/unspecified combination. Status: GREY" };
-    }
+    el("lastRun").textContent = new Date().toLocaleString();
+  }
 
-    function updateDetail(prefix, url, result) {
-      el(prefix).textContent = url;
-      el(prefix.replace("url", "r")).textContent =
-        result.ok ? "OK" : (result.timedOut ? "Timed out" : "Error");
-      el(prefix.replace("url", "h")).textContent = result.status;
-      el(prefix.replace("url", "t")).textContent = result.elapsedMs + " ms";
-    }
+  // Controls
+  el("refreshBtn").addEventListener("click", runCheck);
+  el("saveCfg").addEventListener("click", () => {
+    cfg.URL_1 = el("cfg1").value.trim() || cfg.URL_1;
+    cfg.URL_2 = el("cfg2").value.trim() || cfg.URL_2;
+    const t = parseInt(el("cfgTimeout").value, 10);
+    if (!Number.isNaN(t) && t >= 100) cfg.TIMEOUT_MS = t;
+    saveCfg(cfg);
+  });
 
-    async function runCheck() {
-      const { URL_1, URL_2, TIMEOUT_MS } = cfg;
+  // Init UI
+  el("cfg1").value = cfg.URL_1;
+  el("cfg2").value = cfg.URL_2;
+  el("cfgTimeout").value = cfg.TIMEOUT_MS;
 
-      const [r1, r2] = await Promise.allSettled([
-        timedFetch(URL_1, TIMEOUT_MS),
-        timedFetch(URL_2, TIMEOUT_MS),
-      ]);
-
-      const a = r1.status === "fulfilled" ? r1.value : { ok: false, status: "error", elapsedMs: TIMEOUT_MS, timedOut: false };
-      const b = r2.status === "fulfilled" ? r2.value : { ok: false, status: "error", elapsedMs: TIMEOUT_MS, timedOut: false };
-
-      updateDetail("url1", URL_1, a);
-      updateDetail("url2", URL_2, b);
-
-      const rule = applyRule(a, b);
-      setLight(rule.color, rule.text);
-
-      el("lastRun").textContent = new Date().toLocaleString();
-    }
-
-    // Controls
-    el("refreshBtn").addEventListener("click", runCheck);
-    el("saveCfg").addEventListener("click", () => {
-      cfg.URL_1 = el("cfg1").value.trim() || cfg.URL_1;
-      cfg.URL_2 = el("cfg2").value.trim() || cfg.URL_2;
-      const t = parseInt(el("cfgTimeout").value, 10);
-      if (!Number.isNaN(t) && t >= 100) cfg.TIMEOUT_MS = t;
-      saveCfg(cfg);
-      runCheck();
-    });
-
-    // Init UI
-    el("cfg1").value = cfg.URL_1;
-    el("cfg2").value = cfg.URL_2;
-    el("cfgTimeout").value = cfg.TIMEOUT_MS;
-
-    // First run + interval
-    runCheck();
-    setInterval(runCheck, cfg.INTERVAL_MS);
-  </script>
-</body>
-</html>
+  // No auto-refresh — only manual
+</script>
